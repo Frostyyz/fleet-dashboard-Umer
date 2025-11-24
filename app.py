@@ -34,11 +34,10 @@ st.markdown("""
     .tag-SELL { background-color: #8b0000; color: white; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
     .tag-INSPECT { background-color: #b8860b; color: black; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
     
-    /* Expander Styling */
+    /* Expander Header */
     .streamlit-expanderHeader {
-        background-color: #222 !important;
+        background-color: #262730 !important;
         color: white !important;
-        border-radius: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -58,7 +57,6 @@ def load_initial_data():
     for role, filename in files.items():
         if os.path.exists(filename):
             try:
-                # Load Excel or CSV
                 if filename.endswith('.csv'):
                     df = pd.read_csv(filename)
                 else:
@@ -66,12 +64,10 @@ def load_initial_data():
                     target_sheet = next((s for s in xl.sheet_names if 'about' not in s.lower()), xl.sheet_names[0])
                     df = xl.parse(target_sheet)
 
-                # Fix Headers
                 if "unnamed" in str(df.columns[0]).lower():
                     if filename.endswith('.csv'): df = pd.read_csv(filename, header=1)
                     else: df = xl.parse(target_sheet, header=1)
 
-                # Standardize ID
                 id_col = next((c for c in df.columns if 'unit' in str(c).lower() or 'truck' in str(c).lower() and 'price' not in str(c).lower()), None)
                 if id_col:
                     df['clean_id'] = df[id_col].astype(str).str.replace('SPOT-', '').str.strip()
@@ -96,7 +92,6 @@ def run_logic(dfs):
     if df_fin.empty or 'clean_id' not in df_fin.columns:
         return pd.DataFrame()
 
-    # 1. Base
     pay_col = next((c for c in df_fin.columns if 'pay' in c.lower() and 'month' in c.lower()), None)
     if pay_col:
         df_fin['payoff_balance'] = pd.to_numeric(df_fin[pay_col], errors='coerce').fillna(0) * 12
@@ -109,41 +104,35 @@ def run_logic(dfs):
         col = next((x for x in df_fin.columns if c in x.lower()), None)
         master[c] = df_fin[col] if col else "N/A"
 
-    # 2. Repairs
     if not df_rep.empty and 'clean_id' in df_rep.columns:
         amt_col = next((c for c in df_rep.columns if 'amount' in c.lower()), None)
         if amt_col:
             stats = df_rep.groupby('clean_id')[amt_col].sum().reset_index().rename(columns={amt_col: 'total_repairs'})
             master = master.merge(stats, on='clean_id', how='left')
 
-    # 3. Odometer
     if not df_odo.empty and 'clean_id' in df_odo.columns:
         odo_col = next((c for c in df_odo.columns if 'odo' in c.lower()), None)
         if odo_col:
             stats = df_odo.groupby('clean_id')[odo_col].max().reset_index().rename(columns={odo_col: 'odometer'})
             master = master.merge(stats, on='clean_id', how='left')
 
-    # 4. Distance
     if not df_dist.empty and 'clean_id' in df_dist.columns:
         dist_col = next((c for c in df_dist.columns if 'dist' in c.lower()), None)
         if dist_col:
             stats = df_dist.groupby('clean_id')[dist_col].sum().reset_index().rename(columns={dist_col: 'recent_miles'})
             master = master.merge(stats, on='clean_id', how='left')
 
-    # Crash Proofing
     for col in ['odometer', 'total_repairs', 'recent_miles']:
         if col not in master.columns:
             master[col] = 0.0
 
     master = master.fillna(0)
 
-    # 5. Formulas
     master['est_resale'] = 65000 - (master['odometer'] * 0.05)
     master['est_resale'] = master['est_resale'].clip(lower=10000)
     master['net_equity'] = master['est_resale'] - master['payoff_balance']
     master['cpm'] = master['total_repairs'] / master['recent_miles'].replace(0, 1)
 
-    # 6. Logic
     def get_rec(row):
         reasons = []
         rec = "INSPECT"
@@ -190,7 +179,6 @@ with tab_dash:
         
         st.markdown("---")
         for _, row in view_df.iterrows():
-            # Main Card
             st.markdown(f"""
             <div class="truck-card">
                 <div style="display:flex; justify-content:space-between;">
@@ -207,19 +195,17 @@ with tab_dash:
             </div>
             """, unsafe_allow_html=True)
             
-            # Detail Expander
-            with st.expander("ℹ️ View Details & Analysis"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.caption("Financial Health")
-                    st.write(f"**Payoff Balance:** ${row['payoff_balance']:,.2f}")
-                    st.write(f"**Est. Market Value:** ${row['est_resale']:,.2f}")
-                    st.write(f"**Net Equity:** ${row['net_equity']:,.2f}")
-                with col_b:
-                    st.caption("Operational Health")
-                    st.write(f"**Total Repairs:** ${row['total_repairs']:,.2f}")
-                    st.write(f"**Recent Miles:** {row['recent_miles']:,.0f}")
-                    st.write(f"**Repair Cost/Mile:** ${row['cpm']:.3f}")
+            # NEW INFO BUTTON AREA
+            with st.expander("ℹ️ View Details"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.caption("Financials")
+                    st.write(f"**Payoff:** ${row['payoff_balance']:,.2f}")
+                    st.write(f"**Resale:** ${row['est_resale']:,.2f}")
+                with c2:
+                    st.caption("Operations")
+                    st.write(f"**Repairs:** ${row['total_repairs']:,.2f}")
+                    st.write(f"**Miles:** {row['recent_miles']:,.0f}")
 
 with tab_entry:
     st.markdown("### 📝 Edit Master Data")
@@ -249,9 +235,10 @@ with tab_export:
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             st.session_state['dfs']['finance'].to_excel(writer, sheet_name='Data', index=False)
         
+        # Force binary stream download to fix thumbnail issue
         st.download_button(
             label="Download Updated Finance.xlsx",
             data=buffer.getvalue(),
             file_name="truck-finance_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/octet-stream"
         )
