@@ -77,7 +77,7 @@ def load_initial_data():
                 data[role] = df
             except Exception as e:
                 # Log error but don't crash
-                print(f"Error loading {filename}: {e}")
+                # print(f"Error loading {filename}: {e}")
                 data[role] = pd.DataFrame()
         else:
             data[role] = pd.DataFrame()
@@ -133,7 +133,7 @@ def run_logic(dfs):
             stats = df_dist.groupby('clean_id')[dist_col].sum().reset_index().rename(columns={dist_col: 'recent_miles'})
             master = master.merge(stats, on='clean_id', how='left')
 
-    # CRASH PROOF: Initialize missing columns with 0 if file load failed
+    # CRASH PROOF: Initialize missing columns with 0
     for col in ['odometer', 'total_repairs', 'recent_miles']:
         if col not in master.columns:
             master[col] = 0.0
@@ -182,7 +182,7 @@ master_df = run_logic(st.session_state['dfs'])
 
 with tab_dash:
     if master_df.empty:
-        st.warning("No data found. Please ensure 'truck-finance.xlsx' is in the GitHub repo or add trucks in Data Entry.")
+        st.warning("No data found. Please ensure 'truck-finance.xlsx' is in the GitHub repo.")
     else:
         # Filters
         col1, col2 = st.columns([1,4])
@@ -232,23 +232,30 @@ with tab_entry:
 with tab_export:
     st.markdown("### 💾 Export Reports")
     
-    # 1. Master Report
+    # 1. Master Report (CSV)
     if not master_df.empty:
         csv = master_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download Decision Report (CSV)", csv, "truck_decisions.csv", "text/csv")
+        st.download_button(
+            label="Download Decision Report (CSV)",
+            data=csv,
+            file_name="truck_decisions.csv",
+            mime="text/csv"
+        )
     
-    # 2. Updated Excel
+    # 2. Updated Excel (Fixed MIME Type)
     st.divider()
     st.write("Download Updated Source File (with your new entries):")
     
     buffer = io.BytesIO()
     if 'finance' in st.session_state['dfs']:
+        # Ensure we write to a buffer and reset pointer
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             st.session_state['dfs']['finance'].to_excel(writer, sheet_name='Data', index=False)
         
+        # CORRECT MIME TYPE FOR XLSX
         st.download_button(
             label="Download Updated Finance.xlsx",
             data=buffer.getvalue(),
             file_name="truck-finance_updated.xlsx",
-            mime="application/vnd.ms-excel"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
