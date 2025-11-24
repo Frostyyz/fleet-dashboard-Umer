@@ -33,13 +33,19 @@ st.markdown("""
     .tag-KEEP { background-color: #006400; color: white; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
     .tag-SELL { background-color: #8b0000; color: white; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
     .tag-INSPECT { background-color: #b8860b; color: black; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+    
+    /* Expander Styling */
+    .streamlit-expanderHeader {
+        background-color: #222 !important;
+        color: white !important;
+        border-radius: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 2. ROBUST DATA LOADING ---
 @st.cache_data
 def load_initial_data():
-    # Exact filenames matching your GitHub upload
     files = {
         'finance': 'truck-finance.xlsx',
         'repairs': 'maintenancepo-truck.xlsx',
@@ -56,34 +62,27 @@ def load_initial_data():
                 if filename.endswith('.csv'):
                     df = pd.read_csv(filename)
                 else:
-                    # Smart Sheet Loader (Ignore "About" sheets)
                     xl = pd.ExcelFile(filename)
-                    # Find a sheet that is NOT "About"
                     target_sheet = next((s for s in xl.sheet_names if 'about' not in s.lower()), xl.sheet_names[0])
                     df = xl.parse(target_sheet)
 
-                # Fix Headers if row 0 is junk (common in exports)
+                # Fix Headers
                 if "unnamed" in str(df.columns[0]).lower():
                     if filename.endswith('.csv'): df = pd.read_csv(filename, header=1)
                     else: df = xl.parse(target_sheet, header=1)
 
-                # Standardize ID Column
-                # We look for 'unit_id', 'TRUCK', or similar
+                # Standardize ID
                 id_col = next((c for c in df.columns if 'unit' in str(c).lower() or 'truck' in str(c).lower() and 'price' not in str(c).lower()), None)
                 if id_col:
-                    # Clean the ID to match across files
                     df['clean_id'] = df[id_col].astype(str).str.replace('SPOT-', '').str.strip()
                 
                 data[role] = df
             except Exception as e:
-                # Log error but don't crash
-                # print(f"Error loading {filename}: {e}")
                 data[role] = pd.DataFrame()
         else:
             data[role] = pd.DataFrame()
     return data
 
-# Initialize Session State (This allows Editing)
 if 'dfs' not in st.session_state:
     st.session_state['dfs'] = load_initial_data()
 
@@ -94,11 +93,10 @@ def run_logic(dfs):
     df_odo = dfs.get('odometer', pd.DataFrame())
     df_dist = dfs.get('distance', pd.DataFrame())
 
-    # CRASH PROOF: If finance is empty, return empty
     if df_fin.empty or 'clean_id' not in df_fin.columns:
         return pd.DataFrame()
 
-    # 1. Base (Finance)
+    # 1. Base
     pay_col = next((c for c in df_fin.columns if 'pay' in c.lower() and 'month' in c.lower()), None)
     if pay_col:
         df_fin['payoff_balance'] = pd.to_numeric(df_fin[pay_col], errors='coerce').fillna(0) * 12
@@ -107,7 +105,6 @@ def run_logic(dfs):
         
     master = df_fin[['clean_id', 'payoff_balance']].copy()
     
-    # Meta (Year/Make)
     for c in ['make', 'model', 'year']:
         col = next((x for x in df_fin.columns if c in x.lower()), None)
         master[c] = df_fin[col] if col else "N/A"
@@ -133,7 +130,7 @@ def run_logic(dfs):
             stats = df_dist.groupby('clean_id')[dist_col].sum().reset_index().rename(columns={dist_col: 'recent_miles'})
             master = master.merge(stats, on='clean_id', how='left')
 
-    # CRASH PROOF: Initialize missing columns with 0
+    # Crash Proofing
     for col in ['odometer', 'total_repairs', 'recent_miles']:
         if col not in master.columns:
             master[col] = 0.0
@@ -143,12 +140,10 @@ def run_logic(dfs):
     # 5. Formulas
     master['est_resale'] = 65000 - (master['odometer'] * 0.05)
     master['est_resale'] = master['est_resale'].clip(lower=10000)
-    
     master['net_equity'] = master['est_resale'] - master['payoff_balance']
-    
     master['cpm'] = master['total_repairs'] / master['recent_miles'].replace(0, 1)
 
-    # 6. Recommendation Logic
+    # 6. Logic
     def get_rec(row):
         reasons = []
         rec = "INSPECT"
@@ -163,7 +158,6 @@ def run_logic(dfs):
             rec = "KEEP"
         elif row['recent_miles'] < 1000 and row['net_equity'] < 0:
             rec = "INSPECT"
-            
         return pd.Series([rec, ", ".join(reasons)])
 
     res = master.apply(get_rec, axis=1)
@@ -175,23 +169,19 @@ def run_logic(dfs):
 # --- 4. UI STRUCTURE ---
 st.title("🚛 Fleet Command Center")
 
-tab_dash, tab_entry, tab_export = st.tabs(["📊 Dashboard", "✏️ Data Entry (Add Trucks)", "💾 Export"])
+tab_dash, tab_entry, tab_export = st.tabs(["📊 Dashboard", "✏️ Data Entry", "💾 Export"])
 
-# Calculate Data
 master_df = run_logic(st.session_state['dfs'])
 
 with tab_dash:
     if master_df.empty:
-        st.warning("No data found. Please ensure 'truck-finance.xlsx' is in the GitHub repo.")
+        st.warning("No data found.")
     else:
-        # Filters
         col1, col2 = st.columns([1,4])
         with col1:
             filter_opt = st.selectbox("Filter Action:", ["All", "KEEP", "SELL", "INSPECT"])
-        
         view_df = master_df if filter_opt == "All" else master_df[master_df['Action'] == filter_opt]
         
-        # Metrics
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Trucks", len(view_df))
         c2.metric("Total Equity", f"${view_df['net_equity'].sum():,.0f}")
@@ -199,9 +189,8 @@ with tab_dash:
         c4.metric("Avg CPM", f"${view_df['cpm'].mean():.2f}")
         
         st.markdown("---")
-        
-        # Grid View
         for _, row in view_df.iterrows():
+            # Main Card
             st.markdown(f"""
             <div class="truck-card">
                 <div style="display:flex; justify-content:space-between;">
@@ -217,22 +206,32 @@ with tab_dash:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Detail Expander
+            with st.expander("ℹ️ View Details & Analysis"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.caption("Financial Health")
+                    st.write(f"**Payoff Balance:** ${row['payoff_balance']:,.2f}")
+                    st.write(f"**Est. Market Value:** ${row['est_resale']:,.2f}")
+                    st.write(f"**Net Equity:** ${row['net_equity']:,.2f}")
+                with col_b:
+                    st.caption("Operational Health")
+                    st.write(f"**Total Repairs:** ${row['total_repairs']:,.2f}")
+                    st.write(f"**Recent Miles:** {row['recent_miles']:,.0f}")
+                    st.write(f"**Repair Cost/Mile:** ${row['cpm']:.3f}")
 
 with tab_entry:
     st.markdown("### 📝 Edit Master Data")
-    st.info("Edit the table below to Add New Trucks or Update Finance details. Changes are saved automatically in this session.")
-    
-    # Editable Finance Table
     if 'finance' in st.session_state['dfs'] and not st.session_state['dfs']['finance'].empty:
         edited_df = st.data_editor(st.session_state['dfs']['finance'], num_rows="dynamic", use_container_width=True)
         st.session_state['dfs']['finance'] = edited_df
     else:
-        st.error("Finance data not loaded. Please check file name in GitHub.")
+        st.error("Finance data not loaded.")
 
 with tab_export:
     st.markdown("### 💾 Export Reports")
     
-    # 1. Master Report (CSV)
     if not master_df.empty:
         csv = master_df.to_csv(index=False).encode('utf-8')
         st.download_button(
@@ -242,17 +241,14 @@ with tab_export:
             mime="text/csv"
         )
     
-    # 2. Updated Excel (Fixed MIME Type)
     st.divider()
     st.write("Download Updated Source File (with your new entries):")
     
     buffer = io.BytesIO()
     if 'finance' in st.session_state['dfs']:
-        # Ensure we write to a buffer and reset pointer
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             st.session_state['dfs']['finance'].to_excel(writer, sheet_name='Data', index=False)
         
-        # CORRECT MIME TYPE FOR XLSX
         st.download_button(
             label="Download Updated Finance.xlsx",
             data=buffer.getvalue(),
