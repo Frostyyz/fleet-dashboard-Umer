@@ -16,6 +16,13 @@ st.markdown("""
     h1, h2, h3, h4, h5, h6 { color: #ffffff !important; }
     p, label, span, div { color: #e0e0e0; }
     
+    /* Inputs */
+    .stTextInput > div > div > input {
+        color: white;
+        background-color: #262730;
+        border: 1px solid #444;
+    }
+    
     /* Data Tables */
     .stDataFrame { border: 1px solid #333; }
     
@@ -166,46 +173,61 @@ with tab_dash:
     if master_df.empty:
         st.warning("No data found.")
     else:
-        col1, col2 = st.columns([1,4])
-        with col1:
-            filter_opt = st.selectbox("Filter Action:", ["All", "KEEP", "SELL", "INSPECT"])
-        view_df = master_df if filter_opt == "All" else master_df[master_df['Action'] == filter_opt]
+        # --- NEW SEARCH FEATURE ---
+        col_search, col_filter = st.columns([2, 1])
+        with col_search:
+            search_query = st.text_input("🔍 Search Truck ID", placeholder="Type Truck ID (e.g. 0180)...")
+        with col_filter:
+            filter_opt = st.selectbox("Filter Status", ["All", "KEEP", "SELL", "INSPECT"])
         
+        # Filter Logic
+        view_df = master_df.copy()
+        if filter_opt != "All":
+            view_df = view_df[view_df['Action'] == filter_opt]
+        
+        if search_query:
+            # Case insensitive search
+            view_df = view_df[view_df['clean_id'].astype(str).str.contains(search_query, case=False)]
+
+        # Metrics
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Trucks", len(view_df))
+        c1.metric("Trucks Found", len(view_df))
         c2.metric("Total Equity", f"${view_df['net_equity'].sum():,.0f}")
         c3.metric("Avg Odometer", f"{view_df['odometer'].mean():,.0f}")
         c4.metric("Avg CPM", f"${view_df['cpm'].mean():.2f}")
         
         st.markdown("---")
-        for _, row in view_df.iterrows():
-            st.markdown(f"""
-            <div class="truck-card">
-                <div style="display:flex; justify-content:space-between;">
-                    <h3 style="margin:0;">{row['clean_id']} <span style="font-size:16px; color:#888;">({row['year']} {row['make']})</span></h3>
-                    <span class="tag-{row['Action']}">{row['Action']}</span>
+        
+        if view_df.empty:
+            st.info("No trucks found matching your search.")
+        else:
+            for _, row in view_df.iterrows():
+                st.markdown(f"""
+                <div class="truck-card">
+                    <div style="display:flex; justify-content:space-between;">
+                        <h3 style="margin:0;">{row['clean_id']} <span style="font-size:16px; color:#888;">({row['year']} {row['make']})</span></h3>
+                        <span class="tag-{row['Action']}">{row['Action']}</span>
+                    </div>
+                    <p style="margin: 5px 0;">{row['Reasoning']}</p>
+                    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-top:10px; font-size:14px;">
+                        <div><span style="color:#888;">Equity:</span> <b style="color:#fff;">${row['net_equity']:,.0f}</b></div>
+                        <div><span style="color:#888;">Resale:</span> <b style="color:#fff;">${row['est_resale']:,.0f}</b></div>
+                        <div><span style="color:#888;">CPM:</span> <b style="color:#fff;">${row['cpm']:.2f}</b></div>
+                        <div><span style="color:#888;">Miles:</span> <b style="color:#fff;">{row['odometer']:,.0f}</b></div>
+                    </div>
                 </div>
-                <p style="margin: 5px 0;">{row['Reasoning']}</p>
-                <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-top:10px; font-size:14px;">
-                    <div><span style="color:#888;">Equity:</span> <b style="color:#fff;">${row['net_equity']:,.0f}</b></div>
-                    <div><span style="color:#888;">Resale:</span> <b style="color:#fff;">${row['est_resale']:,.0f}</b></div>
-                    <div><span style="color:#888;">CPM:</span> <b style="color:#fff;">${row['cpm']:.2f}</b></div>
-                    <div><span style="color:#888;">Miles:</span> <b style="color:#fff;">{row['odometer']:,.0f}</b></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # NEW INFO BUTTON AREA
-            with st.expander("ℹ️ View Details"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.caption("Financials")
-                    st.write(f"**Payoff:** ${row['payoff_balance']:,.2f}")
-                    st.write(f"**Resale:** ${row['est_resale']:,.2f}")
-                with c2:
-                    st.caption("Operations")
-                    st.write(f"**Repairs:** ${row['total_repairs']:,.2f}")
-                    st.write(f"**Miles:** {row['recent_miles']:,.0f}")
+                """, unsafe_allow_html=True)
+                
+                with st.expander("ℹ️ View Details"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.caption("Financials")
+                        st.write(f"**Payoff:** ${row['payoff_balance']:,.2f}")
+                        st.write(f"**Resale:** ${row['est_resale']:,.2f}")
+                    with c2:
+                        st.caption("Operations")
+                        st.write(f"**Repairs:** ${row['total_repairs']:,.2f}")
+                        st.write(f"**Miles:** {row['recent_miles']:,.0f}")
 
 with tab_entry:
     st.markdown("### 📝 Edit Master Data")
