@@ -39,6 +39,7 @@ st.markdown("""
 # --- 2. ROBUST DATA LOADING ---
 @st.cache_data
 def load_initial_data():
+    # Exact filenames matching your GitHub upload
     files = {
         'finance': 'truck-finance.xlsx',
         'repairs': 'maintenancepo-truck.xlsx',
@@ -75,7 +76,8 @@ def load_initial_data():
                 
                 data[role] = df
             except Exception as e:
-                st.error(f"Error loading {filename}: {e}")
+                # Log error but don't crash
+                print(f"Error loading {filename}: {e}")
                 data[role] = pd.DataFrame()
         else:
             data[role] = pd.DataFrame()
@@ -92,11 +94,11 @@ def run_logic(dfs):
     df_odo = dfs.get('odometer', pd.DataFrame())
     df_dist = dfs.get('distance', pd.DataFrame())
 
+    # CRASH PROOF: If finance is empty, return empty
     if df_fin.empty or 'clean_id' not in df_fin.columns:
         return pd.DataFrame()
 
     # 1. Base (Finance)
-    # Estimate Payoff Balance
     pay_col = next((c for c in df_fin.columns if 'pay' in c.lower() and 'month' in c.lower()), None)
     if pay_col:
         df_fin['payoff_balance'] = pd.to_numeric(df_fin[pay_col], errors='coerce').fillna(0) * 12
@@ -131,17 +133,19 @@ def run_logic(dfs):
             stats = df_dist.groupby('clean_id')[dist_col].sum().reset_index().rename(columns={dist_col: 'recent_miles'})
             master = master.merge(stats, on='clean_id', how='left')
 
+    # CRASH PROOF: Initialize missing columns with 0 if file load failed
+    for col in ['odometer', 'total_repairs', 'recent_miles']:
+        if col not in master.columns:
+            master[col] = 0.0
+
     master = master.fillna(0)
 
     # 5. Formulas
-    # Depreciation Logic
     master['est_resale'] = 65000 - (master['odometer'] * 0.05)
     master['est_resale'] = master['est_resale'].clip(lower=10000)
     
-    # Equity
     master['net_equity'] = master['est_resale'] - master['payoff_balance']
     
-    # CPM (Cost Per Mile)
     master['cpm'] = master['total_repairs'] / master['recent_miles'].replace(0, 1)
 
     # 6. Recommendation Logic
@@ -178,7 +182,7 @@ master_df = run_logic(st.session_state['dfs'])
 
 with tab_dash:
     if master_df.empty:
-        st.warning("No data found. Please ensure 'truck-finance.xlsx' is in the folder or add trucks in Data Entry.")
+        st.warning("No data found. Please ensure 'truck-finance.xlsx' is in the GitHub repo or add trucks in Data Entry.")
     else:
         # Filters
         col1, col2 = st.columns([1,4])
@@ -223,7 +227,7 @@ with tab_entry:
         edited_df = st.data_editor(st.session_state['dfs']['finance'], num_rows="dynamic", use_container_width=True)
         st.session_state['dfs']['finance'] = edited_df
     else:
-        st.error("Finance data not loaded. Please check file name.")
+        st.error("Finance data not loaded. Please check file name in GitHub.")
 
 with tab_export:
     st.markdown("### 💾 Export Reports")
